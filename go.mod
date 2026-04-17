@@ -2,6 +2,4 @@ module github.com/tonesploit/emailanalyzer-cli
 
 go 1.23
 
-require github.com/tonesploit/emailanalyzer v0.0.0
-
-replace github.com/tonesploit/emailanalyzer => ../emailanalyzer
+require github.com/tonesploit/emailanalyzer v0.1.0
