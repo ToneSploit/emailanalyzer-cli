@@ -1,8 +1,0 @@
-GeoLite2-*/
-*.tar.gz
-config.json
-ipinfo-service
-ipinfo-service.exe
-*.csv
-*.json
-getinfo

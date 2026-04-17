@@ -1,64 +1,73 @@
 package main
 
 import (
-	"text/template"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
+	"github.com/tonesploit/emailanalyzer"
 )
 
-// Docker example https://github.com/olliefr/docker-gs-ping
-
 func main() {
-	// Load configuration
-	config, err := LoadConfiguration("config.json")
+	outDir := flag.String("out", "Analyzed", "output directory")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: analyze-email [flags] <file.eml> ...\n\nFlags:\n")
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+
+	if flag.NArg() == 0 {
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	if err := os.MkdirAll(*outDir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "creating output dir: %v\n", err)
+		os.Exit(1)
+	}
+
+	for _, path := range flag.Args() {
+		if err := process(path, *outDir); err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", path, err)
+		}
+	}
+}
+
+func process(path, outDir string) error {
+	f, err := os.Open(path)
 	if err != nil {
-		println(err)
+		return err
 	}
+	defer f.Close()
 
-	databaseASN, err := GetGeoLite2("GeoLite2-ASN", config.Maxmind.Key)
+	result, err := emailanalyzer.Analyze(f, filepath.Base(path))
 	if err != nil {
-		println(err)
+		return err
 	}
-	config.Maxmind.ASN = databaseASN
 
-	databaseCity, err := GetGeoLite2("GeoLite2-City", config.Maxmind.Key)
+	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+
+	jsonPath := filepath.Join(outDir, base+".json")
+	jf, err := os.Create(jsonPath)
 	if err != nil {
-		println(err)
+		return fmt.Errorf("creating json: %w", err)
 	}
-	config.Maxmind.City = databaseCity
-
-	// Template
-	t := &Template{
-		templates: template.Must(template.ParseGlob("public/views/*.html")),
+	defer jf.Close()
+	enc := json.NewEncoder(jf)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(result); err != nil {
+		return fmt.Errorf("writing json: %w", err)
 	}
 
-	// -----------------------------------------
+	mdPath := filepath.Join(outDir, base+".md")
+	md := emailanalyzer.ToMarkdown(result)
+	if err := os.WriteFile(mdPath, []byte(md), 0o644); err != nil {
+		return fmt.Errorf("writing md: %w", err)
+	}
 
-	e := echo.New()
-	e.Renderer = t
-
-	// Middleware
-	e.Use(middleware.Logger())
-	e.Use(middleware.Recover())
-	/*
-		e.Use(middleware.BasicAuth(func(username, password string, c echo.Context) (bool, error) {
-			// Be careful to use constant time comparison to prevent timing attacks
-			if subtle.ConstantTimeCompare([]byte(username), []byte("joe")) == 1 &&
-				subtle.ConstantTimeCompare([]byte(password), []byte("secret")) == 1 {
-				return true, nil
-			}
-			return false, nil
-		}))
-	*/
-	e.Static("/assets", "public/assets")
-	e.Static("/csv", "public/csv")
-	e.Static("/json", "public/json")
-
-	// Routes
-	e.GET("/", config.getIPInfo)
-	e.POST("/", config.postIPInfo)
-
-	// Start server
-	e.Logger.Fatal(e.Start(":1323"))
+	fmt.Printf("analyzed: %s → %s, %s\n", path, jsonPath, mdPath)
+	return nil
 }
